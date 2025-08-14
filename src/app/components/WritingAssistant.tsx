@@ -2,10 +2,10 @@
 
 import React, { useState } from 'react';
 import { PromptStyle, WritingRequest } from '../lib/types';
-import { generateContent, exportToMarkdown } from '../lib/api';
+import { generateContent, generateContentStream, exportToMarkdown } from '../lib/api';
 import PromptForm from './PromptForm';
-import MarkdownEditor from './MarkdownEditor';
 import ApiSettings, { ApiProvider } from './ApiSettings';
+import StreamingContent from './StreamingContent';
 
 // Default prompt style template
 const defaultPromptStyle: PromptStyle = {
@@ -66,19 +66,10 @@ const API_URLS: Record<ApiProvider, string> = {
   custom: ''
 };
 
-// API 提供商帮助信息
-const API_HELP = {
-  openai: '使用 OpenAI API，例如 GPT-4',
-  grok: '使用 Grok API (X.AI)',
-  ollama: '使用本地运行的 Ollama 服务',
-  custom: '配置自定义 API 端点'
-};
-
 export default function WritingAssistant() {
   const [promptStyle, setPromptStyle] = useState<PromptStyle>(defaultPromptStyle);
   const [topic, setTopic] = useState<string>('儿时赶海');
   const [keywords, setKeywords] = useState<string>('浙江海边、小时候、渔村、温暖、质朴');
-  const [keywordInput, setKeywordInput] = useState<string>('');
   const [wordCount, setWordCount] = useState<number>(800);
   
   // API 设置
@@ -94,6 +85,11 @@ export default function WritingAssistant() {
   const [showPromptEditor, setShowPromptEditor] = useState<boolean>(false);
   const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
   const [showApiSettings, setShowApiSettings] = useState<boolean>(true);
+  
+  // 流式输出相关状态
+  const [isStreaming, setIsStreaming] = useState<boolean>(false);
+  const [isComplete, setIsComplete] = useState<boolean>(true);
+  const [useStreaming, setUseStreaming] = useState<boolean>(true); // 默认使用流式输出
 
   // 添加 Ollama 模型列表状态
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -175,45 +171,6 @@ export default function WritingAssistant() {
     }
   };
 
-  // 为添加按钮新增单独的处理函数
-  const handleAddKeyword = () => {
-    if (keywordInput.trim()) {
-      // 更新关键词列表
-      const newKeywords = keywordInput.trim();
-      setKeywords(keywords ? `${keywords}、${newKeywords}` : newKeywords);
-      setKeywordInput(''); // 清空输入框
-    }
-  };
-
-  // 当 API 提供商变化时更新 URL 和模型
-  const handleApiProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const provider = e.target.value as ApiProvider;
-    setApiProvider(provider);
-    
-    // 如果是预设的提供商，自动填充 URL
-    if (provider !== 'custom') {
-      setLlmApiUrl(API_URLS[provider]);
-    }
-    
-    // 根据提供商设置默认模型
-    if (provider === 'grok') {
-      setModel('grok-3-latest');
-    } else if (provider === 'ollama') {
-      setModel('llama2');
-      // 清空 API Key，因为 Ollama 不需要
-      setLlmApiKey('');
-    } else if (provider === 'openai') {
-      setModel('gpt-4');
-    } else if (provider === 'deepseek') {
-      setLlmApiUrl('https://api.deepseek.com/v1/chat/completions');
-      setModel('deepseek-chat');
-    }
-    
-    // 重置错误
-    setError(null);
-    setApiResponseDetails(null);
-  };
-
   const handleKeywordsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setKeywords(e.target.value);
   };
@@ -224,6 +181,8 @@ export default function WritingAssistant() {
     setError(null);
     setApiResponseDetails(null);
     setOutput('');
+    setIsStreaming(useStreaming);
+    setIsComplete(false);
 
     try {
       // 检查 API 密钥
@@ -247,29 +206,49 @@ export default function WritingAssistant() {
         topic,
         keywords: keywords.split('、'),
         wordCount,
-        llmApiUrl: apiUrl,  // 使用可能修正后的 URL
-        llmApiKey, // Ollama 不需要 API 密钥，但保留该字段以保持接口一致性
-        model  // 添加模型参数
+        llmApiUrl: apiUrl,
+        llmApiKey,
+        model
       };
 
-      // 显示请求开始信息
-      console.log(`开始请求 ${apiProvider} API，使用模型: ${model}...`);
+      console.log(`开始请求 ${apiProvider} API，使用模型: ${model}，流式模式: ${useStreaming}`);
       
-      // Generate content
-      const response = await generateContent(request);
-      
-      if (response.error) {
-        setError(response.error);
-        setApiResponseDetails('请查看浏览器控制台以获取更多错误详情。');
-      } else if (!response.content || response.content.trim() === '') {
-        setError('API 返回了空内容。这可能是由于 API 响应格式不符合预期。');
-        setApiResponseDetails('请尝试切换 API 提供商或检查 API 密钥和 URL 是否正确。');
+      if (useStreaming) {
+        // 使用流式输出
+        await generateContentStream(request, (chunk, isCompleteChunk, errorMsg) => {
+          if (errorMsg) {
+            setError(errorMsg);
+            setApiResponseDetails('请查看浏览器控制台以获取更多错误详情。');
+            setIsStreaming(false);
+            setIsComplete(true);
+          } else if (isCompleteChunk) {
+            setIsStreaming(false);
+            setIsComplete(true);
+            console.log('流式生成完成');
+          } else if (chunk) {
+            setOutput(prev => prev + chunk);
+          }
+        });
       } else {
-        setOutput(response.content);
+        // 使用传统的一次性生成
+        const response = await generateContent(request);
+        
+        if (response.error) {
+          setError(response.error);
+          setApiResponseDetails('请查看浏览器控制台以获取更多错误详情。');
+        } else if (!response.content || response.content.trim() === '') {
+          setError('API 返回了空内容。这可能是由于 API 响应格式不符合预期。');
+          setApiResponseDetails('请尝试切换 API 提供商或检查 API 密钥和 URL 是否正确。');
+        } else {
+          setOutput(response.content);
+          setIsComplete(true);
+        }
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '生成内容时发生未知错误';
       setError(errorMessage);
+      setIsStreaming(false);
+      setIsComplete(true);
       
       // 添加更多帮助信息
       if (errorMessage.includes('Failed to fetch') || errorMessage.includes('网络')) {
@@ -510,13 +489,35 @@ export default function WritingAssistant() {
           <div>
             <div className="bg-white shadow-sm rounded-xl p-6 border border-gray-200 h-full flex flex-col">
               <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-semibold text-gray-800 flex items-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                  生成结果
-                </h2>
-                {output && (
+                <div className="flex items-center">
+                  <h2 className="text-xl font-semibold text-gray-800 flex items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    生成结果
+                  </h2>
+                  
+                  {/* 流式模式切换 */}
+                  <div className="ml-6 flex items-center">
+                    <label className="flex items-center text-sm text-gray-600 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={useStreaming}
+                        onChange={(e) => setUseStreaming(e.target.checked)}
+                        className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        disabled={isLoading}
+                      />
+                      <span className="flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        流式输出
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                
+                {output && isComplete && (
                   <button
                     onClick={handleExport}
                     className="bg-green-600 hover:bg-green-700 text-white py-1.5 px-4 rounded-md text-sm flex items-center transition duration-150 ease-in-out shadow-sm"
@@ -530,34 +531,18 @@ export default function WritingAssistant() {
               </div>
               
               <div className="flex-grow">
-                {error && (
-                  <div className="bg-red-50 text-red-700 p-4 rounded-md border border-red-200 mb-4">
-                    <div className="font-medium flex items-center">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                      </svg>
-                      错误: {error}
-                    </div>
-                    {apiResponseDetails && (
-                      <div className="mt-2 text-sm pl-7">{apiResponseDetails}</div>
-                    )}
-                  </div>
-                )}
+                <StreamingContent
+                  content={output}
+                  isStreaming={isStreaming && isLoading}
+                  isComplete={isComplete}
+                  error={error || undefined}
+                  className="h-full"
+                />
                 
-                {isLoading ? (
-                  <div className="flex justify-center items-center bg-gray-50 border border-gray-200 rounded-lg min-h-[400px]">
-                    <div className="text-center">
-                      <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                      <p className="text-gray-600 mb-2">正在生成内容，请稍候...</p>
-                      <p className="text-xs text-gray-500 max-w-xs mx-auto">这可能需要几秒到几分钟的时间，取决于 API 响应速度和内容长度</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="h-full rounded-lg">
-                    <MarkdownEditor 
-                      initialContent={output} 
-                      onContentChange={setOutput} 
-                    />
+                {error && apiResponseDetails && (
+                  <div className="mt-4 bg-yellow-50 text-yellow-800 p-3 rounded-md border border-yellow-200 text-sm">
+                    <div className="font-medium mb-1">建议:</div>
+                    {apiResponseDetails}
                   </div>
                 )}
               </div>

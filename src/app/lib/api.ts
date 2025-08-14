@@ -1,6 +1,144 @@
-"use client";
-
 import { WritingRequest, ApiResponse, PromptStyle, PolishRequest, PolishResponse } from './types';
+
+// 流式生成回调函数类型
+export type StreamCallback = (chunk: string, isComplete: boolean, error?: string) => void;
+
+// 流式生成内容函数
+export async function generateContentStream(
+  request: WritingRequest, 
+  onChunk: StreamCallback
+): Promise<void> {
+  try {
+    const { promptStyle, topic, keywords, wordCount, llmApiUrl, llmApiKey, model } = request;
+    
+    // Format the prompt template
+    const promptTemplate = formatPromptTemplate(promptStyle, topic, keywords, wordCount);
+    
+    // Detect API provider type from URL
+    const isGrokApi = llmApiUrl.includes('grok') || llmApiUrl.includes('xai');
+    const isOllamaApi = llmApiUrl.includes('ollama') || llmApiUrl.includes('11434');
+    const isDeepSeekApi = llmApiUrl.includes('deepseek');
+    
+    // Prepare request body based on API provider
+    let requestBody: Record<string, unknown>;
+    let isOllama = false;
+    
+    if (isOllamaApi) {
+      requestBody = {
+        model: model || 'llama2',
+        prompt: promptTemplate,
+        stream: true
+      };
+      isOllama = true;
+    } else if (isGrokApi) {
+      requestBody = {
+        messages: [{ role: 'user', content: promptTemplate }],
+        model: "grok-3-latest",
+        temperature: 0.7,
+        stream: true
+      };
+    } else if (isDeepSeekApi) {
+      requestBody = {
+        model: model || 'deepseek-chat',
+        messages: [{ role: 'user', content: promptTemplate }],
+        temperature: 0.7,
+        stream: true
+      };
+    } else {
+      requestBody = {
+        model: model || 'gpt-4',
+        messages: [{ role: 'user', content: promptTemplate }],
+        temperature: 0.7,
+        stream: true
+      };
+    }
+    
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    
+    if (!isOllamaApi && llmApiKey) {
+      headers['Authorization'] = `Bearer ${llmApiKey}`;
+    }
+
+    console.log('开始流式请求到:', llmApiUrl);
+    
+    // 使用流式代理
+    const response = await fetch('/api/stream-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetUrl: llmApiUrl,
+        headers,
+        body: requestBody,
+        isOllama
+      })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: { message: `流式请求失败: ${response.status}` } }));
+      throw new Error(errorData.error?.message || `流式请求失败: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('无法读取流式响应');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine || !trimmedLine.startsWith('data: ')) continue;
+
+          const dataStr = trimmedLine.slice(6);
+          if (dataStr === '[DONE]') {
+            onChunk('', true);
+            return;
+          }
+
+          try {
+            const data = JSON.parse(dataStr);
+            
+            if (data.error) {
+              onChunk('', false, data.error.message);
+              return;
+            }
+
+            if (data.choices && data.choices[0] && data.choices[0].delta) {
+              const content = data.choices[0].delta.content || '';
+              if (content) {
+                onChunk(content, false);
+              }
+              
+              if (data.choices[0].finish_reason === 'stop') {
+                onChunk('', true);
+                return;
+              }
+            }
+          } catch (parseError) {
+            console.warn('解析流式数据失败:', parseError);
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  } catch (error) {
+    console.error('流式生成内容错误:', error);
+    onChunk('', false, error instanceof Error ? error.message : '未知错误');
+  }
+}
 
 export async function generateContent(request: WritingRequest): Promise<ApiResponse> {
   try {

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { SecureApiKeyManager } from '../lib/secureApiKey';
 
 export type ApiProvider = 'openai' | 'grok' | 'ollama' | 'deepseek' | 'custom';
 
@@ -52,6 +53,53 @@ export default function ApiSettings({
   availableModels = [],
   fetchModels
 }: ApiSettingsProps) {
+  const [rememberMe, setRememberMe] = useState(false);
+  const [showSecurityTip, setShowSecurityTip] = useState(false);
+  
+  // 组件加载时尝试恢复保存的 API Key
+  useEffect(() => {
+    const savedKey = SecureApiKeyManager.retrieve(apiProvider);
+    if (savedKey && !apiKey) {
+      setApiKey(savedKey);
+      setRememberMe(true); // 如果有保存的key，说明之前选择了记住我
+    }
+  }, [apiProvider, apiKey, setApiKey]);
+
+  // API Key 变化时自动保存（如果用户选择了记住我）
+  useEffect(() => {
+    if (apiKey && apiProvider !== 'ollama' && rememberMe) {
+      SecureApiKeyManager.store(apiProvider, apiKey, rememberMe);
+    }
+  }, [apiKey, apiProvider, rememberMe]);
+  
+  const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newKey = e.target.value;
+    setApiKey(newKey);
+    
+    // 如果选择了记住我，立即保存
+    if (newKey && rememberMe && apiProvider !== 'ollama') {
+      SecureApiKeyManager.store(apiProvider, newKey, rememberMe);
+    }
+  };
+
+  const handleRememberMeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const remember = e.target.checked;
+    setRememberMe(remember);
+    
+    if (apiKey && apiProvider !== 'ollama') {
+      if (remember) {
+        SecureApiKeyManager.store(apiProvider, apiKey, true);
+      } else {
+        SecureApiKeyManager.clear(apiProvider);
+      }
+    }
+  };
+
+  const clearStoredKey = () => {
+    SecureApiKeyManager.clear(apiProvider);
+    setApiKey('');
+    setRememberMe(false);
+  };
   
   const handleApiProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const provider = e.target.value as ApiProvider;
@@ -144,9 +192,35 @@ export default function ApiSettings({
           </div>
 
           <div>
-            <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
-              API 密钥
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700">
+                API 密钥
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowSecurityTip(!showSecurityTip)}
+                className="text-xs text-blue-600 hover:text-blue-800 flex items-center"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                安全提示
+              </button>
+            </div>
+            
+            {showSecurityTip && (
+              <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-md text-xs text-blue-800">
+                <div className="font-medium mb-1">🔒 API Key 安全提醒：</div>
+                <ul className="space-y-1 text-blue-700">
+                  <li>• API Key 仅在本地浏览器中临时存储</li>
+                  <li>• 使用简单加密保护，避免明文存储</li>
+                  <li>• 会话结束或过期后自动清除</li>
+                  <li>• 请勿在公共设备上选择&quot;记住我&quot;</li>
+                  <li>• 定期更换您的 API Key</li>
+                </ul>
+              </div>
+            )}
+            
             {apiProvider === 'ollama' ? (
               <div className="block w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-md text-gray-500 text-sm">
                 <span className="flex items-center">
@@ -157,14 +231,51 @@ export default function ApiSettings({
                 </span>
               </div>
             ) : (
-              <input
-                type="password"
-                id="apiKey"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                placeholder="输入您的 API 密钥"
-              />
+              <div className="space-y-2">
+                <div className="relative">
+                  <input
+                    type="password"
+                    id="apiKey"
+                    value={apiKey}
+                    onChange={handleApiKeyChange}
+                    className="block w-full px-3 py-2 pr-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                    placeholder="输入您的 API 密钥"
+                  />
+                  {apiKey && (
+                    <button
+                      type="button"
+                      onClick={clearStoredKey}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                      title="清除保存的密钥"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center text-xs text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={rememberMe}
+                      onChange={handleRememberMeChange}
+                      className="mr-2 h-3 w-3 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    记住我 (7天)
+                  </label>
+                  
+                  {SecureApiKeyManager.hasValidKey(apiProvider) && (
+                    <span className="text-xs text-green-600 flex items-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      已保存
+                    </span>
+                  )}
+                </div>
+              </div>
             )}
           </div>
 

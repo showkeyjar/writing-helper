@@ -3,12 +3,23 @@ import { NextRequest, NextResponse } from 'next/server';
 // 设置最大执行时间为 600 秒（10分钟 这里要考虑是否改成 SSE）
 // export const maxDuration = 600; // 增加到10分钟
 export const maxDuration = 60;// 为了过 vercel 的限制，实际部署使用还是建议十分钟
-// 添加 CORS 配置
-export async function OPTIONS() {
+// 添加 CORS 配置 - 使用环境变量控制允许的域名
+const getAllowedOrigin = (origin: string | null): string => {
+  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'];
+  if (!origin || allowedOrigins.includes(origin)) {
+    return origin || allowedOrigins[0];
+  }
+  return allowedOrigins[0];
+};
+
+export async function OPTIONS(request: NextRequest) {
+  const origin = request.headers.get('origin');
+  const allowedOrigin = getAllowedOrigin(origin);
+  
   return new NextResponse(null, {
     status: 200,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': allowedOrigin,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     },
@@ -17,6 +28,9 @@ export async function OPTIONS() {
 
 export async function POST(request: NextRequest) {
   try {
+    const origin = request.headers.get('origin');
+    const allowedOrigin = getAllowedOrigin(origin);
+    
     // 从请求体中获取目标 API 信息
     const { targetUrl, headers, body, isOllama } = await request.json();
 
@@ -26,7 +40,7 @@ export async function POST(request: NextRequest) {
         { 
           status: 400,
           headers: {
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': allowedOrigin,
             'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type, Authorization',
           }
@@ -166,7 +180,7 @@ export async function POST(request: NextRequest) {
       const responseData = await response.json();
       return NextResponse.json(responseData, {
         headers: {
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': allowedOrigin,
           'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         }
@@ -181,7 +195,7 @@ export async function POST(request: NextRequest) {
           { 
             status: 504,
             headers: {
-              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Origin': allowedOrigin,
               'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
               'Access-Control-Allow-Headers': 'Content-Type, Authorization',
             }
@@ -196,7 +210,7 @@ export async function POST(request: NextRequest) {
           { 
             status: 502,
             headers: {
-              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Origin': allowedOrigin,
               'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
               'Access-Control-Allow-Headers': 'Content-Type, Authorization',
             }
@@ -216,7 +230,7 @@ export async function POST(request: NextRequest) {
         { 
           status: 502,
           headers: {
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': allowedOrigin,
             'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type, Authorization',
           }
@@ -225,12 +239,15 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     console.error('API 代理错误:', error);
+    const origin = request.headers.get('origin');
+    const allowedOrigin = getAllowedOrigin(origin);
+    
     return NextResponse.json(
       { error: { message: error instanceof Error ? error.message : '代理请求失败' } },
       { 
         status: 500,
         headers: {
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': allowedOrigin,
           'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         }
