@@ -97,15 +97,15 @@ export default function ResumeGeneratorPage() {
 
     const request: ResumeGenerationRequest = {
       personalInfo: collectedData.personalInfo || {},
-      jobDescription: collectedData.jobDescription || {
+      jobDescription: (collectedData.jobDescription || {
         jobTitle: '',
         company: '',
         industry: '',
         requirements: [],
         responsibilities: [],
         preferredSkills: [],
-        experienceLevel: 'mid'
-      },
+        experienceLevel: 'mid' as const
+      }) as JobDescription,
       workExperience: collectedData.collectedData?.workExperience || [],
       education: collectedData.collectedData?.education || [],
       skills: collectedData.collectedData?.skills?.map(s => s.name) || [],

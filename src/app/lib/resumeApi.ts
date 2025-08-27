@@ -1,4 +1,4 @@
-import { ResumeGenerationRequest, ResumeGenerationResponse, ResumeData, JobDescription } from './resumeTypes';
+import { ResumeGenerationRequest, ResumeGenerationResponse, ResumeData, JobDescription, PersonalInfo, WorkExperience, Education } from './resumeTypes';
 
 // 流式简历生成回调函数类型
 export type ResumeStreamCallback = (
@@ -373,10 +373,10 @@ export async function generateResume(request: ResumeGenerationRequest): Promise<
     } catch {
       // 如果不是JSON格式，创建基础结构
       resumeData = {
-        personalInfo: request.personalInfo as any,
+        personalInfo: request.personalInfo as PersonalInfo,
         professionalSummary: content.substring(0, 500), // 截取前500字符作为总结
-        workExperience: request.workExperience as any,
-        education: request.education as any,
+        workExperience: request.workExperience as WorkExperience[],
+        education: request.education as Education[],
         skills: request.skills.map(skill => ({
           id: Math.random().toString(36).substr(2, 9),
           category: '专业技能',
