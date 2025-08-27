@@ -13,7 +13,7 @@ type NavLink = {
 // 集中管理所有功能页面的导航链接
 export const featureLinks: NavLink[] = [
   { href: '/', label: '写作助手' },
-
+  { href: '/features/resume-generator', label: '智能简历生成器' },
   // { href: '/features/text-summarizer', label: '文本摘要' },
   { href: '/features/ai-rewrite', label: 'AI文本优化' },
   { href: '/features/wechat-formatter', label: '公众号排版' },
